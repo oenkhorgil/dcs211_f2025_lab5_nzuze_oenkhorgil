@@ -3,6 +3,7 @@ import pandas as pd     # Pandas is Python's "data" library ("dataframe" == spre
 import seaborn as sns   # yay for Seaborn plots!
 import matplotlib.pyplot as plt
 import random
+from tqdm import tqdm 
 
 ###########################################################################
 def drawDigitHeatmap(pixels: np.ndarray, showNumbers: bool = True) -> None:
@@ -47,7 +48,37 @@ def fetchDigit(df: pd.core.frame.DataFrame, which_row: int) -> tuple[int, np.nda
     pixels = np.reshape(pixels, (8,8))  # makes 8x8
     return (digit, pixels)              # return a tuple
 
+
 ###################
+def cleanTheData(df: pd.DataFrame) -> np.ndarray:
+
+    data = df.to_numpy()
+    data = np.nan_to_num(data)  
+    return data
+
+#########################
+
+def predictiveModel(train_data, test_features):
+
+    # Separate the features (X) and labels (y)
+    X_train = train_data[:, :-1]       # pixel columns
+    y_train = train_data[:, -1]        # label column
+
+    # get Euclidean distance between this test example and all training rows
+    distances = np.linalg.norm(X_train - test_features, axis=1)
+
+    # Find the index of the smallest distance (the nearest neighbor)
+    nearest_index = np.argmin(distances)
+
+    # Return the label of that nearest neighbor
+    predicted_label = int(y_train[nearest_index])
+    return predicted_label
+
+###################
+
+
+
+##############
 def main() -> None:
     # for read_csv, use header=0 when row 0 is a header row
     filename = 'digits.csv'
@@ -55,6 +86,39 @@ def main() -> None:
     print(df.head())
     print(f"{filename} : file read into a pandas dataframe...")
 
+    data= cleanTheData(df)
+    n = len(data)
+    split_idx = int(0.8 * n)
+
+    train_data = data[:split_idx]
+    test_data  = data[split_idx:]
+##
+    y_test = test_data[:, -1].astype(int)
+    predicted_labels = []
+    for row in tqdm(test_data, desc="Manual 1-NN (train first 80%)"):
+        test_features = row[:-1]                 
+        prediction = predictiveModel(train_data, test_features)
+        predicted_labels.append(prediction)
+    predicted_labels = np.array(predicted_labels, dtype=int)
+ 
+    accuracy = np.round(np.mean(predicted_labels == y_test), 3)
+    print(f"Accuracy: {accuracy:.3f}")
+##
+    train_data_swapped = data[n - split_idx :]   # last 80%
+    test_data_swapped  = data[: n - split_idx]   # first 20%
+    y_test_swapped = test_data_swapped[:, -1].astype(int)
+    
+    predicted_labels_swapped = []
+    for row in tqdm(test_data_swapped, desc="Manual 1-NN (train last 80%)"):
+        test_features = row[:-1]
+        prediction = predictiveModel(train_data_swapped, test_features)
+        predicted_labels_swapped.append(prediction)
+
+    predicted_labels_swapped = np.array(predicted_labels_swapped, dtype=int)
+
+    accuracy_swapped = np.round(np.mean(predicted_labels_swapped == y_test_swapped), 3)
+    print(f"Accuracy train: {accuracy_swapped:.3f}")
+##
     num_to_draw = 5
     for i in range(num_to_draw):
         # let's grab one row of the df at random, extract/shape the digit to be
