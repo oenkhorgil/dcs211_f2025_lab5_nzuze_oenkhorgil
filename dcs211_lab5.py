@@ -60,12 +60,18 @@ def cleanTheData(df: pd.DataFrame) -> np.ndarray:
     Accepts a pandas DataFrame and returns a NumPy array
     of the cleaned data).
     """
-    # keep only pix0..pix63 and the actual_digit label
-    pix_cols = [f"pix{i}" for i in range(64)]
-    df_clean = df[pix_cols + ["actual_digit"]]
+    df_clean = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
+    df_clean = df_clean.dropna(axis=1, how="all")
 
-    # return as numpy array
-    return df_clean.to_numpy()
+    X = df_clean.iloc[:, :-1].apply(pd.to_numeric, errors="coerce").fillna(0)
+    y = df_clean.iloc[:, -1].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+    X = X.to_numpy(dtype=int)
+    y = y.to_numpy(dtype=int).reshape(-1, 1)
+
+    data = np.hstack([X, y])
+
+    return data
 
 #########################
 def predictiveModel(train_data: np.ndarray, test_features: np.ndarray) -> int:
@@ -231,7 +237,7 @@ def main() -> None:
         predicted_labels.append(prediction)
 
     predicted_labels = np.array(predicted_labels, dtype=int)
-    accuracy = (predicted_labels == y_test).mean()
+    accuracy = np.round(np.mean(predicted_labels == y_test), 3)
     print(f"Accuracy 1st train: {accuracy:.3f}")
 
     # Step 4: Swap train/test for Q4
@@ -246,20 +252,21 @@ def main() -> None:
         predicted_labels_swapped.append(prediction)
 
     predicted_labels_swapped = np.array(predicted_labels_swapped, dtype=int)
-    accuracy_swapped = (predicted_labels_swapped == y_test_swapped).mean()
+    accuracy_swapped = np.round(np.mean(predicted_labels_swapped == y_test_swapped), 3)
     print(f"Accuracy train swapped: {accuracy_swapped:.3f}")
 
     # Step 5: Visualize the first five misclassified digits (Q5)
-    wrong_idx = np.where(predicted_labels != y_test)[0]
+    num_to_draw = 5
+    for i in range(num_to_draw):
+        # let's grab one row of the df at random, extract/shape the digit to be
+        # 8x8, and then draw a heatmap of that digit
+        random_row = random.randint(0, len(df) - 1)
+        (digit, pixels) = fetchDigit(df, random_row)
 
-    if len(wrong_idx) == 0:
-        print("No misclassifications in split 1. Nothing to visualize.")
-    else:
-        print("Saving first up to five misclassifications from split 1:")
-    for k in wrong_idx[:5]:
-        abs_idx = split_idx + k
-        digit, pixels = fetchDigit(df, abs_idx)
-        print(f"Pred {predicted_labels[k]} vs True {y_test[k]} at abs row {abs_idx}")
+        print(f"The digit is {digit}")
+        print(f"The pixels are\n{pixels}")  
+        drawDigitHeatmap(pixels)
+        plt.show()
     #
     label_col = df.columns[0]       
     feature_cols = df.columns[1:]
