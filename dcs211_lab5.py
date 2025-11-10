@@ -1,9 +1,14 @@
 import numpy as np      # numpy is Python's "array" library
 import pandas as pd     # Pandas is Python's "data" library ("dataframe" == spreadsheet)
 import seaborn as sns   # yay for Seaborn plots!
+import os
 import matplotlib.pyplot as plt
 import random
 from tqdm import tqdm 
+from typing import Tuple
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
 ###########################################################################
 def drawDigitHeatmap(pixels: np.ndarray, showNumbers: bool = True) -> None:
@@ -52,29 +57,155 @@ def fetchDigit(df: pd.core.frame.DataFrame, which_row: int) -> tuple[int, np.nda
 ###################
 def cleanTheData(df: pd.DataFrame) -> np.ndarray:
 
-    data = df.to_numpy()
-    data = np.nan_to_num(data)  
+    df_clean = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
+    df_clean = df_clean.dropna(axis=1, how="all")
+
+    X = df_clean.iloc[:, :-1].apply(pd.to_numeric, errors="coerce").fillna(0)
+    y = df_clean.iloc[:, -1].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+    X = X.to_numpy(dtype=int)
+    y = y.to_numpy(dtype=int).reshape(-1, 1)
+
+    data = np.hstack([X, y])
+
     return data
 
 #########################
+def predictiveModel(train_data: np.ndarray, test_features: np.ndarray) -> int:
 
-def predictiveModel(train_data, test_features):
+    X_train = train_data[:, :-1]
+    y_train = train_data[:, -1].ravel()
 
-    # Separate the features (X) and labels (y)
-    X_train = train_data[:, :-1]       # pixel columns
-    y_train = train_data[:, -1]        # label column
-
-    # get Euclidean distance between this test example and all training rows
-    distances = np.linalg.norm(X_train - test_features, axis=1)
-
-    # Find the index of the smallest distance (the nearest neighbor)
-    nearest_index = np.argmin(distances)
-
-    # Return the label of that nearest neighbor
-    predicted_label = int(y_train[nearest_index])
-    return predicted_label
+    diffs = X_train - test_features
+    dists = np.sqrt(np.sum(diffs * diffs, axis=1))
+    i_min = int(np.argmin(dists))
+    return int(y_train[i_min])
 
 ###################
+def compareLabels(y_true: np.ndarray, y_pred: np.ndarray, title: str="Results") -> str:
+    ''' Compares true and predicted labels and returns a summary.
+    Parameters:
+        y_true: 1D numpy array or list of actual labels.
+        y_pred: 1D numpy array or list of predicted labels.
+        title: optional string used as a heading for the output (default is "Results").
+    Returns:
+        a formatted string containing the accuracy, confusion matrix, 
+        and classification report.
+    '''
+    acc = accuracy_score(y_true, y_pred)
+    cm  = confusion_matrix(y_true, y_pred)
+    rep = classification_report(y_true, y_pred, digits=3)
+    return (
+        f"{title}\n"
+        f"Accuracy: {acc:.3f}\n"
+        f"Confusion matrix (rows=true, cols=pred):\n{cm}\n"
+        f"Classification report:\n{rep}\n"
+    )
+
+##############
+def pick_initial_k(n_train: int) -> int:
+    ''' Selects an initial value for k in k-NN based on the training set size.
+    Parameters:
+        n_train: integer representing the number of training samples.
+    Returns:
+        an odd integer k approximately equal to √n_train, 
+        limited to the range [1, 31] to avoid extreme values.
+    '''
+    k0 = int(round(np.sqrt(max(1, n_train))))
+    if k0 % 2 == 0:
+        k0 += 1
+    return max(1, min(k0, 31))
+
+##############
+def _knn_predict(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, k: int) -> np.ndarray:
+    ''' Uses KNeighborsClassifier to make predictions.
+    Parameters:
+        X_train: 2D numpy array of training features.
+        y_train: 1D numpy array of corresponding training labels.
+        X_test: 2D numpy array of test features.
+        k: integer specifying the number of nearest neighbors.
+    Returns:
+        a 1D numpy array of predicted labels for the test data.
+    '''
+    clf = KNeighborsClassifier(n_neighbors=k)
+    clf.fit(X_train, y_train)
+    return clf.predict(X_test)
+
+##############
+
+def splitData(all_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split the full [features..., label] array into test and train parts.
+    Returns [X_test, y_test, X_train, y_train] in that order.
+    Uses NumPy's *global* RNG state (seeded externally) via np.random.permutation.
+    Test size is 20% of samples (at least 1 and at most n-1).
+    """
+    arr = np.asarray(all_data)
+    if arr.ndim != 2 or arr.shape[1] < 2:
+        raise ValueError("all_data must be 2D with at least 2 columns")
+
+    X = arr[:, :-1]
+    y = arr[:, -1].astype(int)
+
+    n = len(y)
+    n_test = max(1, min(n - 1, int(np.floor(0.2 * n))))
+    perm = np.random.permutation(n)
+
+    test_idx  = perm[:n_test]
+    train_idx = perm[n_test:]
+
+    X_test,  y_test  = X[test_idx],  y[test_idx]
+    X_train, y_train = X[train_idx], y[train_idx]
+
+    return [X_test, y_test, X_train, y_train]
+
+##############
+def findBestK(X_train: np.ndarray, y_train: np.ndarray, k_values:list[int]=None, validation_size: float = 0.2, seed=None) -> Tuple[int, dict[int, float]]:
+    ''' Finds the best k value for k-NN using a validation split.
+    Parameters:
+        X_train: 2D numpy array of training features.
+        y_train: 1D numpy array of corresponding training labels.
+        k_values: optional list of candidate k values to test (default is odd k from 1 to 31).
+        validation_size: fraction of data used for validation (default 0.2).
+        seed: optional integer for reproducible random splits.
+    Returns:
+        a tuple (best_k, scores) where:
+            best_k is the k value with the highest validation accuracy
+            scores is a dictionary mapping each k to its validation accuracy.
+    '''
+    if k_values is None:
+        k_values = [k for k in range(1, 32) if k % 2 == 1]
+
+    X_sub, X_val, y_sub, y_val = train_test_split(
+        X_train, y_train, test_size=validation_size, random_state=seed, stratify=y_train
+    )
+
+    scores = {}
+    for k in k_values:
+        preds = _knn_predict(X_sub, y_sub, X_val, k)
+        scores[k] = float(np.mean(preds == y_val))
+
+    max_acc = max(scores.values())
+    best_k = min(k for k, s in scores.items() if s == max_acc)
+    return best_k, scores
+
+##############
+def trainAndTest(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, best_k: int) -> np.ndarray:
+    ''' Trains a k-NN model on the full training set and predicts labels for the test set.
+    Parameters:
+        X_train: 2D numpy array of training features.
+        y_train: 1D numpy array of corresponding training labels.
+        X_test: 2D numpy array of test features.
+        best_k: integer specifying the chosen number of nearest neighbors.
+    Returns:
+        a 1D numpy array of predicted labels for the test data.
+    '''
+    from sklearn.neighbors import KNeighborsClassifier
+    import numpy as np
+
+    clf = KNeighborsClassifier(n_neighbors=int(best_k))
+    clf.fit(X_train, np.asarray(y_train).ravel())
+    preds = clf.predict(X_test)
+    return preds.astype(int)
 
 
 
@@ -132,11 +263,34 @@ def main() -> None:
         plt.show()
 
     #
-    # OK!  Onward to knn for digits! (based on your iris work...)
+    label_col = df.columns[0]       
+    feature_cols = df.columns[1:]
+    X_all = df[feature_cols].to_numpy(dtype=float)
+    y_all = df[label_col].to_numpy()
+    X_test, y_test, X_train, y_train = splitData(
+    X_all=X_all, y_all=y_all, test_size=0.2, random_state=8675309)
     #
+    k_guess = pick_initial_k(len(y_train))
+    y_pred_guess = trainAndTest(X_train, y_train, X_test, k_guess)
+    print(compareLabels(y_test, y_pred_guess, title=f"Exercise 8 – k guess = {k_guess}"))
 
-###############################################################################
-# wrap the call to main inside this if so that _this_ file can be imported
-# and used as a library, if necessary, without executing its main
-if __name__ == "__main__":
-    main()
+    #
+    seeds = [8675309, 5551212, 20251109]
+    best_by_seed = {}
+    score_tables = {}
+
+    for s in seeds:
+        k_s, scores_s = findBestK(X_train, y_train, seed=s)
+        best_by_seed[s] = k_s
+        score_tables[s] = scores_s
+
+    best_k = int(np.median(list(best_by_seed.values()))) 
+    print("Exercise 9 – Best k per seed:", best_by_seed)
+    print("Exercise 9 – Chosen best_k:", best_k)
+
+    #
+    y_pred_best = trainAndTest(X_train, y_train, X_test, best_k)
+    print(compareLabels(y_test, y_pred_best, title=f"Exercises 9–10 – best_k = {best_k}"))
+    
+    if __name__ == "__main__":
+        main()
