@@ -27,7 +27,7 @@ def drawDigitHeatmap(pixels: np.ndarray, showNumbers: bool = True) -> None:
     # (fmt = "d" indicates to show annotation with integer format)
     sns.heatmap(pixels, annot = showNumbers, fmt = "d", linewidths = 0.5, \
                 ax = axes, cmap = colormap)
-    plt.show(block = False)
+    plt.show(block = True)
 
 ###########################################################################
 def fetchDigit(df: pd.core.frame.DataFrame, which_row: int) -> tuple[int, np.ndarray]:
@@ -51,10 +51,16 @@ def fetchDigit(df: pd.core.frame.DataFrame, which_row: int) -> tuple[int, np.nda
 
 ###################
 def cleanTheData(df: pd.DataFrame) -> np.ndarray:
+    """
+    Accepts a pandas DataFrame and returns a NumPy array
+    of the cleaned data).
+    """
+    # keep only pix0..pix63 and the actual_digit label
+    pix_cols = [f"pix{i}" for i in range(64)]
+    df_clean = df[pix_cols + ["actual_digit"]]
 
-    data = df.to_numpy()
-    data = np.nan_to_num(data)  
-    return data
+    # return as numpy array
+    return df_clean.to_numpy()
 
 #########################
 
@@ -80,34 +86,37 @@ def predictiveModel(train_data, test_features):
 
 ##############
 def main() -> None:
-    # for read_csv, use header=0 when row 0 is a header row
+    # Step 1: Read the file
     filename = 'digits.csv'
-    df = pd.read_csv(filename, header = 0)
+    df = pd.read_csv(filename, header=0)
     print(df.head())
     print(f"{filename} : file read into a pandas dataframe...")
 
-    data= cleanTheData(df)
+    # Step 2: Clean the data
+    data = cleanTheData(df)
     n = len(data)
     split_idx = int(0.8 * n)
 
+    # Step 3: Train = first 80%, Test = last 20%
     train_data = data[:split_idx]
     test_data  = data[split_idx:]
-##
     y_test = test_data[:, -1].astype(int)
+
     predicted_labels = []
     for row in tqdm(test_data, desc="Manual 1-NN (train first 80%)"):
-        test_features = row[:-1]                 
+        test_features = row[:-1]
         prediction = predictiveModel(train_data, test_features)
         predicted_labels.append(prediction)
+
     predicted_labels = np.array(predicted_labels, dtype=int)
- 
-    accuracy = np.round(np.mean(predicted_labels == y_test), 3)
-    print(f"Accuracy: {accuracy:.3f}")
-##
-    train_data_swapped = data[n - split_idx :]   # last 80%
-    test_data_swapped  = data[: n - split_idx]   # first 20%
+    accuracy = (predicted_labels == y_test).mean()
+    print(f"Accuracy 1st train: {accuracy:.3f}")
+
+    # Step 4: Swap train/test for Q4
+    train_data_swapped = data[n - split_idx:]
+    test_data_swapped  = data[:n - split_idx]
     y_test_swapped = test_data_swapped[:, -1].astype(int)
-    
+
     predicted_labels_swapped = []
     for row in tqdm(test_data_swapped, desc="Manual 1-NN (train last 80%)"):
         test_features = row[:-1]
@@ -115,28 +124,32 @@ def main() -> None:
         predicted_labels_swapped.append(prediction)
 
     predicted_labels_swapped = np.array(predicted_labels_swapped, dtype=int)
+    accuracy_swapped = (predicted_labels_swapped == y_test_swapped).mean()
+    print(f"Accuracy train swapped: {accuracy_swapped:.3f}")
 
-    accuracy_swapped = np.round(np.mean(predicted_labels_swapped == y_test_swapped), 3)
-    print(f"Accuracy train: {accuracy_swapped:.3f}")
-##
-    num_to_draw = 5
-    for i in range(num_to_draw):
-        # let's grab one row of the df at random, extract/shape the digit to be
-        # 8x8, and then draw a heatmap of that digit
-        random_row = random.randint(0, len(df) - 1)
-        (digit, pixels) = fetchDigit(df, random_row)
+    # Step 5: Visualize the first five misclassified digits (Q5)
+    wrong_idx = np.where(predicted_labels != y_test)[0]
 
-        print(f"The digit is {digit}")
-        print(f"The pixels are\n{pixels}")  
-        drawDigitHeatmap(pixels)
-        plt.show()
+    if len(wrong_idx) == 0:
+        print("No misclassifications in split 1. Nothing to visualize.")
+    else:
+        print("Saving first up to five misclassifications from split 1:")
+    for k in wrong_idx[:5]:
+        abs_idx = split_idx + k
+        digit, pixels = fetchDigit(df, abs_idx)
+        print(f"Pred {predicted_labels[k]} vs True {y_test[k]} at abs row {abs_idx}")
 
-    #
-    # OK!  Onward to knn for digits! (based on your iris work...)
-    #
+        
+        drawDigitHeatmap(pixels, showNumbers=True)
 
-###############################################################################
-# wrap the call to main inside this if so that _this_ file can be imported
-# and used as a library, if necessary, without executing its main
+        # save to file
+        fname = f"misclassified_{k}_pred{predicted_labels[k]}_true{y_test[k]}_abs{abs_idx}.png"
+        plt.savefig(fname, dpi=200, bbox_inches="tight")
+        plt.close()
+        print(f"  -> saved {fname}")
+
+
+
+# Keep this at the bottom so it only runs when executed directly
 if __name__ == "__main__":
     main()
